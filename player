@@ -1,0 +1,131 @@
+public class Player : MonoBehaviour
+{
+    [Header("Move Info")]
+    public float moveSpeed;//定义速度，与xInput相乘控制速度的大小
+    public float jumpForce;
+    [Header("Dash Info")]
+    [SerializeField] private float dashCooldown;
+    private float dashUsageTimer;//为dash设置冷却时间，在一定时间内不能连续使用
+    public float dashSpeed;//冲刺速度
+    public float dashDuration;//持续时间
+    public float dashDir { get; private set; }
+    [Header("Collision Info")]
+    [SerializeField] private Transform groundCheck;//transform类，代表的时物体的位置,后面会来定位子组件的位置    
+    [SerializeField] private float groundCheckDistance;
+    [SerializeField] private Transform wallCheck;//transform类，代表的时物体的位置,后面会来定位子组件的位置    
+    [SerializeField] private float wallCheckDistance;
+    [SerializeField] private LayerMask whatIsGround;//LayerMask类，与Raycast配合，https://docs.unity3d.com/cn/current/ScriptReference/Physics.Raycast.html
+
+    public int facingDir { get; private set; } = 1;
+    private bool facingRight = true;//判断是否朝右
+    #region 定义Unity组件
+    public Animator anim { get; private set; }//这样才能配合着拿到自己身上的animator的控制权
+    public Rigidbody2D rb { get; private set; }//配合拿到身上的Rigidbody2D组件控制权
+    #endregion
+    #region 定义States
+    public PlayerStateMachine stateMachine { get; private set; }
+    public PlayerIdleState idleState { get; private set; }
+    public PlayerMoveState moveState { get; private set; }
+    public PlayerJumpState jumpState { get; private set; }
+    public PlayerAirState airState { get; private set; }
+    public PlayerDashState dashState { get; private set; }
+    public PlayerWallSlideState wallSlide { get; private set; }
+    public PlayerWallJumpState wallJump { get; private set; }
+
+
+    public PlayerPrimaryAttack primaryAttack { get; private set; }
+    #endregion
+    private void Awake()
+    {
+        stateMachine = new PlayerStateMachine();
+        //通过构造函数，在构造时传递信息
+        idleState = new PlayerIdleState(this, stateMachine, "Idle");
+        moveState = new PlayerMoveState(this, stateMachine, "Move");
+        jumpState = new PlayerJumpState(this, stateMachine, "Jump");
+        airState = new PlayerAirState(this, stateMachine, "Jump");
+        dashState = new PlayerDashState(this, stateMachine, "Dash");
+        wallSlide = new PlayerWallSlideState(this, stateMachine, "WallSlide");
+        wallJump = new PlayerWallJumpState(this, stateMachine, "Jump");//wallJump也是Jump动画
+
+
+        primaryAttack = new PlayerPrimaryAttack(this, stateMachine, "Attack");
+        //this 就是 Player这个类本身
+    }//Awake初始化所以State，为所有State传入各自独有的参数，及animBool，以判断是否调用此动画（与animatoin配合完成）
+    private void Start()
+    {
+        anim = GetComponentInChildren<Animator>();//拿到自己身上的animator的控制权
+        rb = GetComponent<Rigidbody2D>();
+        stateMachine.Initialize(idleState);
+
+    }
+
+    private void Update()//在mano中update会自动刷新但其他没有mano的不会故，需要在这个updata中调用其他脚本中的函数stateMachine.currentState.update以实现 //stateMachine中的update
+
+    {
+        stateMachine.currentState.Update();//反复调用CurrentState的Update函数
+        CheckForDashInput();
+    }
+
+    public void AnimationTrigger() => stateMachine.currentState.AnimationFinishTrigger();
+    //从当前状态拿到AnimationTrigger进行调用的函数
+
+    public void CheckForDashInput()
+    {
+
+        dashUsageTimer -= Time.deltaTime;//给dash上冷却时间
+        if (IsWallDetected())
+        {
+            return;
+        }//修复在wallslide可以dash的BUG
+        if (Input.GetKeyDown(KeyCode.LeftShift) && dashUsageTimer < 0)
+        {
+
+            dashUsageTimer = dashCooldown;
+            dashDir = Input.GetAxisRaw("Horizontal");//设置一个值，可以将dash的方向改为你想要的方向而不是你的朝向
+            if (dashDir == 0)
+            {
+                dashDir = facingDir;//只有当玩家没有控制方向时才使用默认朝向
+            }
+            stateMachine.ChangeState(dashState);
+        }
+
+    }//将Dash切换设置成一个函数，使其在所以情况下都能使用
+    public void SetVelocity(float _xVelocity, float _yVelocity)
+    {
+        rb.velocity = new Vector2(_xVelocity, _yVelocity);//将rb的velocity属性设置为对应的想要的二维向量。因为2D游戏的速度就是二维向量
+        FlipController(_xVelocity);//在其他设置速度的时候调用翻转控制器
+    }//控制速度的函数，此函数在其他State中可能会使用，但仅能通过player.SeVelocity调用
+    public bool IsGroundDetected()
+    {
+        return Physics2D.Raycast(groundCheck.position, Vector2.down, groundCheckDistance, whatIsGround);
+    }//通过RayCast检测是否挨着地面,https://docs.unity3d.com/cn/current/ScriptReference/Physics.Raycast.html
+    //xxxxxxxx()   => xxxxxxxx  == xxxxxxxxxx() return xxxxxxxxx;
+    public bool IsWallDetected()
+    {
+        return Physics2D.Raycast(wallCheck.position, Vector2.right * facingDir, wallCheckDistance, whatIsGround);
+    }//通过RayCast检测是否挨着地面,https://docs.unity3d.com/cn/current/ScriptReference/Physics.Raycast.html
+    //xxxxxxxx()   => xxxxxxxx  == xxxxxxxxxx() return xxxxxxxxx;
+    private void OnDrawGizmos()
+    {
+        Gizmos.DrawLine(groundCheck.position, new Vector3(groundCheck.position.x, groundCheck.position.y - groundCheckDistance));//绘制一条从 from(前面的) 开始到 to（后面的） 的线。
+        Gizmos.DrawLine(wallCheck.position, new Vector3(wallCheck.position.x + wallCheckDistance, wallCheck.position.y));//绘制一条从 from(前面的) 开始到 to（后面的） 的线。
+    }//画线函数
+    public void Flip()
+    {
+        facingDir = facingDir * -1;
+        facingRight = !facingRight;
+        transform.Rotate(0, 180, 0);//旋转函数,transform不需要额外定义，因为他是自带的
+    }//翻转函数
+
+    public void FlipController(float _x)//目前设置x，目的时能在空中时也能转身
+    {
+        if (_x > 0 && !facingRight)//当速度大于0且没有朝右时，翻转
+        {
+            Flip();
+        }
+        else if (_x < 0 && facingRight)
+        {
+            Flip();
+        }
+    }
+}
